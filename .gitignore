@@ -1,0 +1,39 @@
+# Build artifacts
+*.obj
+*.exe
+*.efi
+*.pdb
+*.ilk
+*.lib
+*.exp
+Work/
+work/src*/Work/
+work/build/
+work/build_debug/
+
+# BIOS files (large + per-board)
+*.bin
+*.F[0-9]*
+work/bios/
+
+# Tools (downloadable)
+work/tools/
+
+# Reference src (12 historical versions — don't ship)
+export/
+
+# Old extraction dumps
+*.dump/
+*.report.txt
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Local Claude/MCP config
+.claude/
+.mcp.json
