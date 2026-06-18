@@ -8,4 +8,6 @@ forked from vtilo's smmmem release on unknowncheats. added rdmsr and wrmsr comma
 
 source is in release-b660/src. build it from x64 vs developer cmd with build.cmd. then use uefireplace to swap usbrtsmm and httpbootdxe in your stock bios, rename to gigabyte.bin, flash with the rear q-flash plus button. dont use the menu q-flash, it rejects unsigned.
 
-screenshot of smi_count running is in release-b660/proof.
+## Proof
+
+![smi_count.exe output](release-b660/proof/smi_count.png)
