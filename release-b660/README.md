@@ -31,6 +31,10 @@ stress_test.exe     # perf + write round-trip
 smi_count.exe       # MSR 0x34 detection measurement
 ```
 
+## Proof
+
+![smi_count.exe output](proof/smi_count.png)
+
 ## Notes
 
 - Adds `CMD_RDMSR` / `CMD_WRMSR` beyond vtilo's LATEST.
