@@ -74,6 +74,14 @@ static UINT64 gMapPdpt;
 static UINT64 gMapWindowBase;
 static UINT32 gMapWindowBaseValid;
 
+typedef struct {
+  UINT64 Eprocess;
+  UINT64 Cr3;
+  UINT32 Pid;
+  UINT32 InUse;
+} OPEN_PROC;
+static OPEN_PROC gOpenProc[MAX_OPEN_PROCESSES];
+
 static VOID CopyMemLocal(VOID *Destination, const VOID *Source, UINTN Size) {
   UINT8 *Dst = (UINT8 *)Destination;
   const UINT8 *Src = (const UINT8 *)Source;
@@ -1150,6 +1158,8 @@ static EFI_STATUS HandleRequest(REQUEST *Request, RESPONSE *Response) {
     UINT32 HeaderBytes;
     UINT32 PayloadOff;
     BATCH_RESULT *Results;
+    UINT32 CachedPid = 0;
+    UINT64 CachedCr3 = 0;
 
     if (Count == 0 || Count > MAX_BATCH_ITEMS) {
       Reply(Response, Request, EFI_INVALID_PARAMETER, 0, 0, 0);
@@ -1160,7 +1170,6 @@ static EFI_STATUS HandleRequest(REQUEST *Request, RESPONSE *Response) {
       Reply(Response, Request, EFI_INVALID_PARAMETER, 0, 0, 0);
       return EFI_INVALID_PARAMETER;
     }
-    /* Zero response, then build in place: header table + payloads. */
     ZeroMem(Response, sizeof(*Response));
     Response->Magic = RESP_MAGIC;
     Response->Command = Request->Command;
@@ -1168,7 +1177,6 @@ static EFI_STATUS HandleRequest(REQUEST *Request, RESPONSE *Response) {
     Results = (BATCH_RESULT *)Response->Data;
     PayloadOff = HeaderBytes;
     for (i = 0; i < Count; i++) {
-      PROCESS_INFO P;
       EFI_STATUS S;
       Results[i].Status = (UINT32)EFI_INVALID_PARAMETER;
       Results[i].Offset = 0;
@@ -1178,13 +1186,112 @@ static EFI_STATUS HandleRequest(REQUEST *Request, RESPONSE *Response) {
         Results[i].Status = (UINT32)EFI_OUT_OF_RESOURCES;
         continue;
       }
-      ZeroMem(&P, sizeof(P));
-      S = FindProcessPid(Items[i].Pid, &P);
+      if (Items[i].Pid != CachedPid || CachedCr3 == 0) {
+        PROCESS_INFO P;
+        ZeroMem(&P, sizeof(P));
+        S = FindProcessPid(Items[i].Pid, &P);
+        if (EFI_ERROR(S)) {
+          Results[i].Status = (UINT32)S;
+          CachedPid = 0;
+          CachedCr3 = 0;
+          continue;
+        }
+        CachedPid = Items[i].Pid;
+        CachedCr3 = P.Cr3;
+      }
+      S = CopyVirtCr3(CachedCr3, Items[i].Va,
+                      Response->Data + PayloadOff, Items[i].Size, 0);
       if (EFI_ERROR(S)) {
         Results[i].Status = (UINT32)S;
         continue;
       }
-      S = CopyVirtCr3(P.Cr3, Items[i].Va,
+      Results[i].Status = (UINT32)EFI_SUCCESS;
+      Results[i].Offset = PayloadOff;
+      Results[i].Size = Items[i].Size;
+      PayloadOff += Items[i].Size;
+      OkCount++;
+    }
+    Response->Status = (UINT32)EFI_SUCCESS;
+    Response->Result = OkCount;
+    Response->DataSize = PayloadOff;
+    return EFI_SUCCESS;
+  }
+  if (Request->Command == CMD_OPEN_PROCESS) {
+    PROCESS_INFO P;
+    UINT32 i;
+    Status = FindProcessPid((UINT32)Request->Arg1, &P);
+    if (EFI_ERROR(Status)) {
+      Reply(Response, Request, Status, 0, 0, 0);
+      return Status;
+    }
+    for (i = 0; i < MAX_OPEN_PROCESSES; i++) {
+      if (gOpenProc[i].InUse == 0) {
+        gOpenProc[i].Eprocess = P.Eprocess;
+        gOpenProc[i].Cr3 = P.Cr3;
+        gOpenProc[i].Pid = (UINT32)Request->Arg1;
+        gOpenProc[i].InUse = 1;
+        Reply(Response, Request, EFI_SUCCESS, (UINT64)(i + 1), 0, 0);
+        return EFI_SUCCESS;
+      }
+    }
+    Reply(Response, Request, EFI_OUT_OF_RESOURCES, 0, 0, 0);
+    return EFI_OUT_OF_RESOURCES;
+  }
+  if (Request->Command == CMD_CLOSE_PROCESS) {
+    UINT32 Handle = (UINT32)Request->Arg1;
+    if (Handle == 0 || Handle > MAX_OPEN_PROCESSES) {
+      Reply(Response, Request, EFI_INVALID_PARAMETER, 0, 0, 0);
+      return EFI_INVALID_PARAMETER;
+    }
+    gOpenProc[Handle - 1].InUse = 0;
+    gOpenProc[Handle - 1].Eprocess = 0;
+    gOpenProc[Handle - 1].Cr3 = 0;
+    gOpenProc[Handle - 1].Pid = 0;
+    Reply(Response, Request, EFI_SUCCESS, 0, 0, 0);
+    return EFI_SUCCESS;
+  }
+  if (Request->Command == CMD_READ_VIRT_BATCH_H) {
+    /* Same wire format as CMD_READ_VIRT_BATCH but Items[i].Pid is a handle (1-based). */
+    UINT32 Count = (UINT32)Request->Arg1;
+    BATCH_ITEM *Items = (BATCH_ITEM *)Request->Data;
+    UINT32 i;
+    UINT32 OkCount = 0;
+    UINT32 HeaderBytes;
+    UINT32 PayloadOff;
+    BATCH_RESULT *Results;
+
+    if (Count == 0 || Count > MAX_BATCH_ITEMS) {
+      Reply(Response, Request, EFI_INVALID_PARAMETER, 0, 0, 0);
+      return EFI_INVALID_PARAMETER;
+    }
+    HeaderBytes = Count * sizeof(BATCH_RESULT);
+    if (HeaderBytes > RESPONSE_DATA_SIZE) {
+      Reply(Response, Request, EFI_INVALID_PARAMETER, 0, 0, 0);
+      return EFI_INVALID_PARAMETER;
+    }
+    ZeroMem(Response, sizeof(*Response));
+    Response->Magic = RESP_MAGIC;
+    Response->Command = Request->Command;
+    Response->Sequence = Request->Sequence;
+    Results = (BATCH_RESULT *)Response->Data;
+    PayloadOff = HeaderBytes;
+    for (i = 0; i < Count; i++) {
+      UINT32 Handle = Items[i].Pid;
+      EFI_STATUS S;
+      Results[i].Status = (UINT32)EFI_INVALID_PARAMETER;
+      Results[i].Offset = 0;
+      Results[i].Size = 0;
+      if (Handle == 0 || Handle > MAX_OPEN_PROCESSES ||
+          gOpenProc[Handle - 1].InUse == 0) {
+        Results[i].Status = (UINT32)EFI_NOT_FOUND;
+        continue;
+      }
+      if (Items[i].Size == 0 ||
+          PayloadOff + Items[i].Size > RESPONSE_DATA_SIZE) {
+        Results[i].Status = (UINT32)EFI_OUT_OF_RESOURCES;
+        continue;
+      }
+      S = CopyVirtCr3(gOpenProc[Handle - 1].Cr3, Items[i].Va,
                       Response->Data + PayloadOff, Items[i].Size, 0);
       if (EFI_ERROR(S)) {
         Results[i].Status = (UINT32)S;

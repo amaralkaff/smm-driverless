@@ -29,6 +29,9 @@
 #define CMD_RDMSR 12U
 #define CMD_WRMSR 13U
 #define CMD_READ_VIRT_BATCH 14U
+#define CMD_OPEN_PROCESS 15U
+#define CMD_CLOSE_PROCESS 16U
+#define CMD_READ_VIRT_BATCH_H 17U
 
 #pragma pack(push, 1)
 typedef struct {
@@ -463,6 +466,65 @@ int ReadVirtBatch(const BATCH_ITEM *Items, void **Buffers, uint32_t Count) {
   if (!Send(Request, &Response) || Response.Status != STATUS_OK) return 0;
 
   /* Response layout: BATCH_RESULT[Count] header table, then packed data buffers */
+  if (Response.DataSize < Count * sizeof(BATCH_RESULT)) return 0;
+
+  const BATCH_RESULT *results = (const BATCH_RESULT *)Response.Data;
+  uint32_t ok = 0;
+  for (i = 0; i < Count; i++) {
+    if (results[i].Status != STATUS_OK) continue;
+    if (results[i].Offset + results[i].Size > sizeof(Response.Data)) continue;
+    if (results[i].Size != Items[i].Size) continue;
+    CopyMemory(Buffers[i], Response.Data + results[i].Offset, results[i].Size);
+    ok++;
+  }
+  return (int)ok;
+}
+
+int SmmOpenProcess(uint32_t Pid, uint32_t *Handle) {
+  uint8_t In[REQUEST_SIZE];
+  REQUEST *Request = (REQUEST *)In;
+  RESPONSE Response;
+
+  InitRequest(Request, CMD_OPEN_PROCESS);
+  Request->Arg1 = Pid;
+  if (!Send(Request, &Response) || Response.Status != STATUS_OK) return 0;
+  *Handle = (uint32_t)Response.Result;
+  return *Handle != 0;
+}
+
+int SmmCloseProcess(uint32_t Handle) {
+  uint8_t In[REQUEST_SIZE];
+  REQUEST *Request = (REQUEST *)In;
+  RESPONSE Response;
+
+  InitRequest(Request, CMD_CLOSE_PROCESS);
+  Request->Arg1 = Handle;
+  if (!Send(Request, &Response) || Response.Status != STATUS_OK) return 0;
+  return 1;
+}
+
+/*
+ * Batched scattered read using process handles instead of PIDs.
+ * Items reuse BATCH_ITEM struct; Items[i].Pid holds a Handle obtained from OpenProcess.
+ * Skips per-item EPROCESS list walk entirely.
+ */
+int ReadVirtBatchH(const BATCH_ITEM *Items, void **Buffers, uint32_t Count) {
+  uint8_t In[REQUEST_SIZE];
+  REQUEST *Request = (REQUEST *)In;
+  RESPONSE Response;
+  uint32_t i;
+  size_t total_in;
+
+  if (Count == 0 || Count > MAX_BATCH_ITEMS) return 0;
+  total_in = (size_t)Count * sizeof(BATCH_ITEM);
+  if (total_in > RESPONSE_DATA_SIZE) return 0;
+
+  InitRequest(Request, CMD_READ_VIRT_BATCH_H);
+  Request->Arg1 = Count;
+  Request->DataSize = (uint32_t)total_in;
+  CopyMemory(Request->Data, Items, total_in);
+
+  if (!Send(Request, &Response) || Response.Status != STATUS_OK) return 0;
   if (Response.DataSize < Count * sizeof(BATCH_RESULT)) return 0;
 
   const BATCH_RESULT *results = (const BATCH_RESULT *)Response.Data;

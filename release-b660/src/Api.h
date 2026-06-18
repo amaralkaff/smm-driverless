@@ -56,4 +56,13 @@ typedef struct {
 #pragma pack(pop)
 int ReadVirtBatch(const BATCH_ITEM *Items, void **Buffers, uint32_t Count);
 
+/*
+ * Process handle caching: skip per-call EPROCESS list walk.
+ * OpenProcess returns a small 1-based handle valid until CloseProcess or reboot.
+ * ReadVirtBatchH reuses BATCH_ITEM, with Items[i].Pid interpreted as Handle.
+ */
+int SmmOpenProcess(uint32_t Pid, uint32_t *Handle);
+int SmmCloseProcess(uint32_t Handle);
+int ReadVirtBatchH(const BATCH_ITEM *Items, void **Buffers, uint32_t Count);
+
 #endif
