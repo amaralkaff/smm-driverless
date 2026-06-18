@@ -1,42 +1,11 @@
-# SmmMem — B660 GAMING X
+smm-driverless
 
-Driverless Windows memory access via SMM. Forked from [vtilo's release](https://www.unknowncheats.me/forum/anti-cheat-bypass/754948-smmmem-driverless-windows-memory-access-smm.html).
+read and write windows memory from usermode through smm. no kernel driver needed. just patch two modules into your bios, flash with q-flash plus, then talk to it from a normal exe.
 
-**Works on:** Gigabyte B660 GAMING X DDR4 rev 1.0 + i5-12400F + BIOS F35a.
+works on my gigabyte b660 gaming x ddr4 with i5-12400F on bios f35a. other boards probably need different module guids.
 
-## Build (x64 VS Developer Cmd)
+forked from vtilo's smmmem release on unknowncheats. added rdmsr and wrmsr commands on top so we can read msr 0x34 and see how loud this thing is to anticheat. spoiler: very loud on this board, idle smi rate is basically zero so every call shows up.
 
-```
-cd release-b660/src
-build.cmd
-```
+source is in release-b660/src. build it from x64 vs developer cmd with build.cmd. then use uefireplace to swap usbrtsmm and httpbootdxe in your stock bios, rename to gigabyte.bin, flash with the rear q-flash plus button. dont use the menu q-flash, it rejects unsigned.
 
-## Flash
-
-Patch stock BIOS with [UEFITool 0.28.0](https://github.com/LongSoft/UEFITool/releases/tag/0.28.0):
-
-```
-UEFIReplace stock.bin 04EAAAA1-29A1-11D7-8838-00500473D4EB 10 Smm.efi -o tmp.bin -all
-UEFIReplace tmp.bin   ECEBCB00-D9C8-11E4-AF3D-8CDCD426C973 10 Dxe.efi -o modded.bin -all
-```
-
-Rename `modded.bin` → `gigabyte.bin`, flash via **Q-Flash Plus rear button** (not menu Q-Flash — rejects unsigned).
-
-## Run
-
-```
-Client.exe          # ping
-test.exe            # API smoke test
-stress_test.exe     # perf + write round-trip
-smi_count.exe       # MSR 0x34 detection measurement
-```
-
-## Proof
-
-![smi_count.exe output](release-b660/proof/smi_count.png)
-
-## Notes
-
-- Adds `CMD_RDMSR` / `CMD_WRMSR` beyond vtilo's LATEST.
-- ~0.44 ms per SMI, ~800 KB/s read ceiling. Batch hard.
-- Idle SMI rate ~0/sec on this board → any cheat use is binary-detectable via MSR 0x34. Don't run against AC that samples this MSR.
+screenshot of smi_count running is in release-b660/proof.
