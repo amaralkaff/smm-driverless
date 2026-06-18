@@ -29,8 +29,8 @@ typedef UINT64 EFI_PHYSICAL_ADDRESS;
 #define MAILBOX_SIZE 0x2000U
 #define REQUEST_SIZE 4096U
 #define RESPONSE_OFFSET 0x1000U
-#define RESPONSE_SIZE 512U
-#define RESPONSE_DATA_SIZE 352U
+#define RESPONSE_SIZE 4096U
+#define RESPONSE_DATA_SIZE 4060U
 #define NAME_SIZE 64U
 
 #define CONFIG_MAGIC 0x434D4D534D4D5355ULL
@@ -50,6 +50,9 @@ typedef UINT64 EFI_PHYSICAL_ADDRESS;
 #define CMD_FIND_EXPORT 11U
 #define CMD_RDMSR 12U
 #define CMD_WRMSR 13U
+#define CMD_READ_VIRT_BATCH 14U
+
+#define MAX_BATCH_ITEMS 64U
 
 #define STATUS_OK 0U
 #define EFI_RUNTIME_SERVICES_DATA 6U
@@ -260,6 +263,29 @@ typedef struct {
   UINT32 MailboxSize;
   UINT32 SwSmiValue;
 } CONFIG;
+
+/*
+ * Batched read request layout (CMD_READ_VIRT_BATCH):
+ *   Request->Arg1 = Count (number of BATCH_ITEM entries)
+ *   Request->Data = BATCH_ITEM[Count]
+ *
+ * Response->Result = Count_OK (number of items successfully read)
+ * Response->DataSize = total bytes written
+ * Response->Data layout: BATCH_RESULT[Count] header table, then packed read buffers
+ */
+typedef struct {
+  UINT32 Pid;
+  UINT32 Size;
+  UINT64 Va;
+} BATCH_ITEM;
+
+typedef struct {
+  UINT32 Status;     /* 0 = ok, else failed */
+  UINT32 Offset;     /* offset from start of Response->Data where this item's bytes live */
+  UINT32 Size;       /* actual bytes read (same as request Size on success) */
+  UINT32 Reserved;
+} BATCH_RESULT;
+
 #pragma pack(pop)
 
 typedef EFI_STATUS(EFIAPI *EFI_SMM_HANDLER_ENTRY_POINT2)(

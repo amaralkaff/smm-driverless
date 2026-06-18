@@ -9,8 +9,8 @@
 #define WMIGUID_EXECUTE 0x0010
 #define WMI_METHOD_ID 1U
 #define REQUEST_SIZE 4096U
-#define RESPONSE_SIZE 512U
-#define RESPONSE_DATA_SIZE 352U
+#define RESPONSE_SIZE 4096U
+#define RESPONSE_DATA_SIZE 4060U
 #define REQ_MAGIC 0x5145524D4D5355ULL
 #define RESP_MAGIC 0x5345524D4D5355ULL
 #define STATUS_OK 0U
@@ -28,6 +28,16 @@
 #define CMD_FIND_EXPORT 11U
 #define CMD_RDMSR 12U
 #define CMD_WRMSR 13U
+#define CMD_READ_VIRT_BATCH 14U
+
+#pragma pack(push, 1)
+typedef struct {
+  uint32_t Status;
+  uint32_t Offset;
+  uint32_t Size;
+  uint32_t Reserved;
+} BATCH_RESULT;
+#pragma pack(pop)
 
 typedef ULONG(WINAPI *WMI_OPEN_BLOCK)(GUID *Guid, DWORD DesiredAccess,
                                       HANDLE *DataBlockHandle);
@@ -426,6 +436,45 @@ int RdMsr(uint32_t Msr, uint64_t *Value) {
   }
   *Value = Response.Result;
   return 1;
+}
+
+/*
+ * Batched scattered read in a single SMI.
+ * Items: array of {pid, va, size} requests, up to MAX_BATCH_ITEMS.
+ * Buffers: array of caller-allocated output buffers, one per item, each at least items[i].Size bytes.
+ * Returns number of items successfully read.
+ */
+int ReadVirtBatch(const BATCH_ITEM *Items, void **Buffers, uint32_t Count) {
+  uint8_t In[REQUEST_SIZE];
+  REQUEST *Request = (REQUEST *)In;
+  RESPONSE Response;
+  uint32_t i;
+  size_t total_in;
+
+  if (Count == 0 || Count > MAX_BATCH_ITEMS) return 0;
+  total_in = (size_t)Count * sizeof(BATCH_ITEM);
+  if (total_in > RESPONSE_DATA_SIZE) return 0;
+
+  InitRequest(Request, CMD_READ_VIRT_BATCH);
+  Request->Arg1 = Count;
+  Request->DataSize = (uint32_t)total_in;
+  CopyMemory(Request->Data, Items, total_in);
+
+  if (!Send(Request, &Response) || Response.Status != STATUS_OK) return 0;
+
+  /* Response layout: BATCH_RESULT[Count] header table, then packed data buffers */
+  if (Response.DataSize < Count * sizeof(BATCH_RESULT)) return 0;
+
+  const BATCH_RESULT *results = (const BATCH_RESULT *)Response.Data;
+  uint32_t ok = 0;
+  for (i = 0; i < Count; i++) {
+    if (results[i].Status != STATUS_OK) continue;
+    if (results[i].Offset + results[i].Size > sizeof(Response.Data)) continue;
+    if (results[i].Size != Items[i].Size) continue;
+    CopyMemory(Buffers[i], Response.Data + results[i].Offset, results[i].Size);
+    ok++;
+  }
+  return (int)ok;
 }
 
 int WrMsr(uint32_t Msr, uint64_t Value) {

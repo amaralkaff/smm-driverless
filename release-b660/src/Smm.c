@@ -1019,6 +1019,8 @@ static VOID Reply(RESPONSE *Response, REQUEST *Request, EFI_STATUS Status,
   }
 }
 
+static UINT8 gScratch[RESPONSE_DATA_SIZE];
+
 static EFI_STATUS HandleRequest(REQUEST *Request, RESPONSE *Response) {
   PROCESS_INFO Process;
   MODULE_INFO Module;
@@ -1026,11 +1028,11 @@ static EFI_STATUS HandleRequest(REQUEST *Request, RESPONSE *Response) {
   UINT32 Size;
   UINT64 Pa = 0;
   UINT64 Address = 0;
-  UINT8 Scratch[RESPONSE_DATA_SIZE];
+  UINT8 *Scratch = gScratch;
 
   ZeroMem(&Process, sizeof(Process));
   ZeroMem(&Module, sizeof(Module));
-  ZeroMem(Scratch, sizeof(Scratch));
+  ZeroMem(Scratch, RESPONSE_DATA_SIZE);
   if (Request->Magic != REQ_MAGIC) {
     return EFI_NOT_FOUND;
   }
@@ -1138,6 +1140,65 @@ static EFI_STATUS HandleRequest(REQUEST *Request, RESPONSE *Response) {
   if (Request->Command == CMD_WRMSR) {
     __writemsr((UINT32)Request->Arg1, Request->Arg2);
     Reply(Response, Request, EFI_SUCCESS, Request->Arg2, 0, 0);
+    return EFI_SUCCESS;
+  }
+  if (Request->Command == CMD_READ_VIRT_BATCH) {
+    UINT32 Count = (UINT32)Request->Arg1;
+    BATCH_ITEM *Items = (BATCH_ITEM *)Request->Data;
+    UINT32 i;
+    UINT32 OkCount = 0;
+    UINT32 HeaderBytes;
+    UINT32 PayloadOff;
+    BATCH_RESULT *Results;
+
+    if (Count == 0 || Count > MAX_BATCH_ITEMS) {
+      Reply(Response, Request, EFI_INVALID_PARAMETER, 0, 0, 0);
+      return EFI_INVALID_PARAMETER;
+    }
+    HeaderBytes = Count * sizeof(BATCH_RESULT);
+    if (HeaderBytes > RESPONSE_DATA_SIZE) {
+      Reply(Response, Request, EFI_INVALID_PARAMETER, 0, 0, 0);
+      return EFI_INVALID_PARAMETER;
+    }
+    /* Zero response, then build in place: header table + payloads. */
+    ZeroMem(Response, sizeof(*Response));
+    Response->Magic = RESP_MAGIC;
+    Response->Command = Request->Command;
+    Response->Sequence = Request->Sequence;
+    Results = (BATCH_RESULT *)Response->Data;
+    PayloadOff = HeaderBytes;
+    for (i = 0; i < Count; i++) {
+      PROCESS_INFO P;
+      EFI_STATUS S;
+      Results[i].Status = (UINT32)EFI_INVALID_PARAMETER;
+      Results[i].Offset = 0;
+      Results[i].Size = 0;
+      if (Items[i].Size == 0 ||
+          PayloadOff + Items[i].Size > RESPONSE_DATA_SIZE) {
+        Results[i].Status = (UINT32)EFI_OUT_OF_RESOURCES;
+        continue;
+      }
+      ZeroMem(&P, sizeof(P));
+      S = FindProcessPid(Items[i].Pid, &P);
+      if (EFI_ERROR(S)) {
+        Results[i].Status = (UINT32)S;
+        continue;
+      }
+      S = CopyVirtCr3(P.Cr3, Items[i].Va,
+                      Response->Data + PayloadOff, Items[i].Size, 0);
+      if (EFI_ERROR(S)) {
+        Results[i].Status = (UINT32)S;
+        continue;
+      }
+      Results[i].Status = (UINT32)EFI_SUCCESS;
+      Results[i].Offset = PayloadOff;
+      Results[i].Size = Items[i].Size;
+      PayloadOff += Items[i].Size;
+      OkCount++;
+    }
+    Response->Status = (UINT32)EFI_SUCCESS;
+    Response->Result = OkCount;
+    Response->DataSize = PayloadOff;
     return EFI_SUCCESS;
   }
   Reply(Response, Request, EFI_UNSUPPORTED, 0, 0, 0);

@@ -46,4 +46,14 @@ int Dump(const MODULE_INFO *Module, DUMP_CALLBACK Callback, void *Context);
 int RdMsr(uint32_t Msr, uint64_t *Value);
 int WrMsr(uint32_t Msr, uint64_t Value);
 
+#define MAX_BATCH_ITEMS 64U
+#pragma pack(push, 1)
+typedef struct {
+  uint32_t Pid;
+  uint32_t Size;
+  uint64_t Va;
+} BATCH_ITEM;
+#pragma pack(pop)
+int ReadVirtBatch(const BATCH_ITEM *Items, void **Buffers, uint32_t Count);
+
 #endif
