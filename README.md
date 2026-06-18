@@ -7,7 +7,7 @@ Driverless Windows memory access via SMM. Forked from [vtilo's release](https://
 ## Build (x64 VS Developer Cmd)
 
 ```
-cd src
+cd release-b660/src
 build.cmd
 ```
 
@@ -33,7 +33,7 @@ smi_count.exe       # MSR 0x34 detection measurement
 
 ## Proof
 
-![smi_count.exe output](proof/smi_count.png)
+![smi_count.exe output](release-b660/proof/smi_count.png)
 
 ## Notes
 
